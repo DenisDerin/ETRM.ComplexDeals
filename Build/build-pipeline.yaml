@@ -1,0 +1,31 @@
+name: $(Build.DefinitionName)_$(Date:yy).$(Date:MM).$(Date:dd)$(rev:.r)
+trigger: none
+
+resources:
+  pipelines:
+    - pipeline: buildpipeline
+      source: 'ETRM Complex Deals/Etrm.ComplexDeals Build'
+      trigger: none
+
+pool:
+  name: TRADING-DOTNET-03
+
+parameters:
+  - name: DeployApi
+    displayName: Deploy the API
+    type: boolean
+    default: true
+
+  - name: DeployService
+    displayName: Deploy the Service & Database
+    type: boolean
+    default: true
+
+  - name: DeploymentNonSecureEnvironment
+    displayName: Deployment Non Secure Environment
+    type: string
+    values:
+      - None
+      - ETRM CDX DV 01
+      - ETRM CDX QA 01
+      - ETRM CDX UT 01
