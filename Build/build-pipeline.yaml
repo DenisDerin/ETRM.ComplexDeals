@@ -29,3 +29,11 @@ parameters:
       - ETRM CDX DV 01
       - ETRM CDX QA 01
       - ETRM CDX UT 01
+
+  - name: MyDeploymentVariable
+    displayName: MyDeploymentVariable
+    type: string
+    values:
+    - One
+    - Two
+    - Three
