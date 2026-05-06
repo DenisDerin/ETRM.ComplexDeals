@@ -39,3 +39,165 @@ parameters:
     - Three
     - Four
     - Five
+
+
+  - name: DeploymentSecureEnvironment
+    displayName: Deployment Secure Environment
+    type: string
+    values:
+      - None
+      - ETRM CDX FF 01
+      - ETRM CDX PR 01 
+
+  - name: UseAutoCR
+    displayName: Use Auto Change Request
+    type: boolean
+    default: false
+
+variables: 
+  - group: ids-dorc-api
+  - name: CR_ID
+    value: ""
+  - name: ReleaseId
+    value: $(Build.BuildId)
+  - name: RequestedFor
+    value: $(Build.RequestedFor)
+  - name: CollectionUri
+    value: $(System.CollectionUri)
+  - name: ReleaseName
+    value: $(Build.BuildNumber)    
+  - name: DorcComponentInstall
+    ${{ if and(eq(parameters.DeployApi, true), eq(parameters.DeployService, true)) }}:
+      value: ETRM Complex Deals Database;ETRM Complex Deals Service;ETRM Complex Deals API
+    ${{ elseif and(eq(parameters.DeployApi, true), eq(parameters.DeployService, false)) }}:
+      value: ETRM Complex Deals API
+    ${{ elseif and(eq(parameters.DeployApi, false), eq(parameters.DeployService, true)) }}:
+      value: ETRM Complex Deals Database;ETRM Complex Deals Service
+    ${{ else }}:
+      value: ''
+  - name: DorcComponentInstallDR
+    ${{ if and(eq(parameters.DeployApi, true), eq(parameters.DeployService, true)) }}:
+      value: ETRM Complex Deals Service;ETRM Complex Deals API
+    ${{ elseif eq(parameters.DeployApi, true) }}:
+      value: ETRM Complex Deals API
+    ${{ elseif eq(parameters.DeployService, true) }}:
+      value: ETRM Complex Deals Service
+    ${{ else }}:
+      value: ''
+  - name: BuildRunName
+    value: $(resources.pipeline.buildpipeline.runName)
+  - name: DropPath
+    value: $(Pipeline.Workspace)\buildpipeline\Drop
+  - name: CRRequired 
+    value: ${{ and(eq(parameters.UseAutoCR, true), or(ne(parameters.DeploymentNonSecureEnvironment, 'None'), ne(parameters.DeploymentSecureEnvironment, 'None'))) }}
+  - name: ImplementationPlan.Production
+    value: "Execute Azure DevOps release $(ReleaseName) with Build $(BuildRunName)"
+  - name: implementation_plan
+    value: "Azure DevOps Pipeline $(ReleaseName) with Build $(BuildRunName)\r\n==================================\r\nFix on Fail: \r\nRun & approve Azure DevOps release FF stage.\r\n==================================\r\nProduction:\r\nRun & approve Azure DevOps release PR stage.\r\n==================================\r\nDisaster Recovery:\r\nRun & approve Azure DevOps release DR stage."
+  - name: ChangeRequestEnvironment
+    ${{ if eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX PR 01') }}:
+      value: 'PROD'
+    ${{ else }}:
+      value: 'TEST'
+  - name: DBAAppName
+    value: EtrmCDx
+  - name: DorcDBAElevationRequiredForProd
+    ${{ if eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX PR 01') }}:
+      value: true
+    ${{ else }}:
+      value: false
+
+stages:
+
+  - template: pipelines/templates/release-prepare.yml
+
+  - ${{ if ne(parameters.DeploymentNonSecureEnvironment, 'None') }}:
+      - template: pipelines/templates/deploy-stage.yml
+        parameters:
+          DorcProject: 'ETRM CDX'
+          DorcEnvironment: ${{ parameters.DeploymentNonSecureEnvironment }}
+          DorcComponentInstall: ${{ variables.DorcComponentInstall }}
+          AzureDevOpsEnvironment: 'ETRM Complex Deals Non Secure'
+          dependsOn:
+            - ReleasePrepare
+
+  - ${{ if eq(variables.CRRequired, true) }}:
+      - template: pipelines/templates/change-request-create.yml
+        parameters:
+          ${{ if ne(parameters.DeploymentNonSecureEnvironment, 'None') }}:
+            dependsOn:
+              - Deploy_${{ replace(replace(parameters.DeploymentNonSecureEnvironment, ' ', '_'), '-', '_') }}
+          ${{ else }}:
+            dependsOn:
+              - ReleasePrepare
+
+  - ${{ if or(eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX FF 01'), eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX PR 01')) }}:
+      - template: pipelines/templates/deploy-stage.yml
+        parameters:
+          DorcProject: 'ETRM CDX'
+          DorcEnvironment: 'ETRM CDX FF 01'
+          DorcComponentInstall: ${{ variables.DorcComponentInstall }}
+          AzureDevOpsEnvironment: 'ETRM Complex Deals Secure'
+          ${{ if eq(variables.CRRequired, true) }}:
+            dependsOn:
+              - CreateCR
+          ${{ elseif ne(parameters.DeploymentNonSecureEnvironment, 'None') }}:
+            dependsOn:
+              - Deploy_${{ replace(replace(parameters.DeploymentNonSecureEnvironment, ' ', '_'), '-', '_') }}
+          ${{ else }}:
+            dependsOn:
+              - ReleasePrepare
+
+  - ${{ if eq(variables.DorcDBAElevationRequiredForProd, true) }}:
+      - template: pipelines/templates/change-request-dba-elevate.yml
+        parameters:
+          ${{ if eq(variables.CRRequired, true) }}:
+            dependsOn:
+              - CreateCR
+              - Deploy_ETRM_CDX_FF_01
+          ${{ else }}:
+            dependsOn:
+              - Deploy_ETRM_CDX_FF_01
+
+  - ${{ if eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX PR 01') }}:
+      - template: pipelines/templates/deploy-stage.yml
+        parameters:
+          DorcProject: 'ETRM CDX'
+          DorcEnvironment: 'ETRM CDX PR 01'
+          DorcComponentInstall: ${{ variables.DorcComponentInstall }}
+          AzureDevOpsEnvironment: 'ETRM Complex Deals Production'
+          ${{ if eq(variables.DorcDBAElevationRequiredForProd, true) }}:
+            dependsOn:
+              - ElevateDorcDBAForProdDeployment
+          ${{ else }}:
+            dependsOn:
+              - Deploy_ETRM_CDX_FF_01
+
+  - ${{ if eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX PR 01') }}:
+      - template: pipelines/templates/deploy-stage.yml
+        parameters:
+          DorcProject: 'ETRM CDX'
+          DorcEnvironment: 'ETRM CDX DR 01'
+          DorcComponentInstall: ${{ variables.DorcComponentInstallDR }}
+          AzureDevOpsEnvironment: 'ETRM Complex Deals Production'
+          dependsOn:
+            - Deploy_ETRM_CDX_PR_01
+
+  - ${{ if eq(variables.CRRequired, true) }}:
+      - template: pipelines/templates/change-request-complete.yml
+        parameters:
+          ${{ if eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX PR 01') }}:
+            dependsOn:
+              - CreateCR
+              - Deploy_ETRM_CDX_DR_01
+          ${{ elseif eq(parameters.DeploymentSecureEnvironment, 'ETRM CDX FF 01') }}:
+            dependsOn:
+              - CreateCR
+              - Deploy_ETRM_CDX_FF_01
+          ${{ elseif ne(parameters.DeploymentNonSecureEnvironment, 'None') }}:
+            dependsOn:
+              - CreateCR
+              - Deploy_${{ replace(replace(parameters.DeploymentNonSecureEnvironment, ' ', '_'), '-', '_') }}
+          ${{ else }}:
+            dependsOn:
+              - CreateCR
